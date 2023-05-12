@@ -13,6 +13,9 @@
 			"@decorators": ["src/utils/decorators"],
 			"@decorators/*": ["src/plugins/*/utils/decorators"],
 
+			"@images": ["src/assets/images"],
+			"@images/*": ["src/plugins/*/assets/images"],
+
 			"@errors": ["src/utils/errors"],
 			"@errors/*": ["src/plugins/*/utils/errors"],
 

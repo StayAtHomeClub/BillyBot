@@ -1,5 +1,5 @@
 import { Category } from "@discordx/utilities"
-import { ApplicationCommandOptionType, CommandInteraction, EmbedBuilder, EmbedField, GuildMember, Message, User, UserMention } from "discord.js"
+import { ApplicationCommandOptionType, CommandInteraction, EmbedBuilder, EmbedField, EmbedType, GuildMember, Message, User, UserMention } from "discord.js"
 import { Client } from "discordx"
 import { injectable } from "tsyringe"
 
@@ -39,12 +39,12 @@ export default class OddsCommand {
       .addFields(
         {
           name:  `\`${interaction.user.username}\``,
-          value: `Rolls a ${ROLL_ONE}`,
+          value: `Rolls a ${ROLL_ONE} :game_die:`,
           inline: true,
         },
         {
           name: `\`${mention.user.username}\``,
-          value: `Rolls a ${ROLL_TWO}`,
+          value: `Rolls a ${ROLL_TWO} :game_die:`,
           inline: true,
         }
       )
@@ -53,6 +53,7 @@ export default class OddsCommand {
       })
 
       await interaction.followUp({
+        content: `${mention}`,
         embeds: [embed],
       })
 	}

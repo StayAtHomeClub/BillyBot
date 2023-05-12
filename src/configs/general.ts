@@ -4,14 +4,14 @@ export const generalConfig: GeneralConfigType = {
 	description: 'Discord bot for Beelos Brotherhood', // the description of your bot
 	defaultLocale: 'en', // default language of the bot, must be a valid locale
 	ownerId: process.env['BOT_OWNER_ID'] || '',
-	timezone: 'Europe/Paris', // default TimeZone to well format and localize dates (logs, stats, etc)
+	timezone: 'America/Los_Angeles', // default TimeZone to well format and localize dates (logs, stats, etc)
 
 	simpleCommandsPrefix: '!', // default prefix for simple command messages (old way to do commands on discord)
 	automaticDeferring: true, // enable or not the automatic deferring of the replies of the bot on the command interactions
 
 	// useful links
 	links: {
-		invite: 'https://www.change_invite_link_here.com',
+		invite: '',
 		supportServer: 'https://discord.com/api/oauth2/authorize?client_id=1105966528765112320&permissions=8&scope=bot',
 		gitRemoteRepo: 'https://github.com/StayAtHomeClub/BillyBot',
 	},
@@ -31,16 +31,11 @@ export const generalConfig: GeneralConfigType = {
 			text: 'with Billy',
 			type: 'PLAYING'
 		},
-		{
-			text: 'some knowledge',
-			type: 'STREAMING'
-		}
 	]
 
 }
 
 // global colors
 export const colorsConfig = {
-
-	primary: '#2F3136'
+	primary: '#FF5733'
 }
