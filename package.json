@@ -85,7 +85,8 @@
     "ts-toolbelt": "^9.6.0",
     "tsyringe": "~4.7.0",
     "typesafe-i18n": "^5.24.3",
-    "uuid": "~9.0.0"
+    "uuid": "~9.0.0",
+    "yelp-fusion": "^3.0.0"
   },
   "devDependencies": {
     "@swc-node/register": "1.5.5",

@@ -7,7 +7,7 @@ export const generalConfig: GeneralConfigType = {
 	timezone: 'America/Los_Angeles', // default TimeZone to well format and localize dates (logs, stats, etc)
 
 	simpleCommandsPrefix: '!', // default prefix for simple command messages (old way to do commands on discord)
-	automaticDeferring: true, // enable or not the automatic deferring of the replies of the bot on the command interactions
+	automaticDeferring: false, // enable or not the automatic deferring of the replies of the bot on the command interactions
 
 	// useful links
 	links: {
