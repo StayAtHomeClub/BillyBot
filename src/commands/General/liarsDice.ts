@@ -14,6 +14,9 @@ import { Discord, Slash } from "@decorators"
 import { generateDiceAttachment, getColor, rollDice } from "@utils/functions"
 import { Category } from "@discordx/utilities"
 import { injectable } from "tsyringe"
+import { CollectedInteraction } from "discord.js"
+import { UserSelectMenuInteraction } from "discord.js"
+import { StringSelectMenuInteraction } from "discord.js"
 
 export enum CustomIds {
 	JOIN_GAME_BUTTON = "join-game-button",
@@ -29,8 +32,8 @@ export enum CustomIds {
 
 interface Wager {
 	calledBs: boolean;
-	quantity: string | null;
-	diceFace: string | null;
+	quantity: number;
+	diceFace: number;
 	result: string | null;
 }
 
@@ -44,7 +47,10 @@ interface Player {
 
 interface Game {
 	currentWager: Wager;
-	currentOrder: number;
+	currentTurn: number;
+	quantity: number;
+	diceFace: number;
+	calledBs: boolean;
 }
 
 interface DiscordButton {
@@ -57,7 +63,7 @@ interface DiscordButton {
 @Discord()
 @injectable()
 @Category('General')
-export default class OddsCommand {
+export default class LiarsDiceCommand {
 
 	game: Game;
 
@@ -65,24 +71,27 @@ export default class OddsCommand {
 
 	embed: EmbedBuilder;
 
-	currentTurn: number;
-
 	role: Role | undefined;
 
-	messageId: string;
+	embedSpacing: string;
+
+	messageId: string | undefined;
 
 	constructor() {
 		this.users = [];
-		this.currentTurn = 1;
 		this.game = {
 			currentWager: {
 				calledBs: false,
-				quantity: null,
-				diceFace: null,
+				quantity: 0,
+				diceFace: 0,
 				result: null,
 			},
-			currentOrder: 1
+			currentTurn: 1,
+			quantity: 0,
+			diceFace: 0,
+			calledBs: false
 		}
+		this.embedSpacing = '\u200b' + ' '.repeat(50);
 	}
 
 	@Slash({
@@ -177,39 +186,38 @@ export default class OddsCommand {
 					break;
 				case CustomIds.START_GAME_BUTTON:
 					if(user) {
-						this.users.sort( (a, b) => a.order - b.order);
-						await this.handleStartGame(interaction, user);
+						await this.handleStartGame(interaction, message, user);
 					}
 					break;
 				case CustomIds.SHOW_DICE_BUTTON:
 					if(user) {
-						this.handleShowDice(message, user);
+						await this.handleShowDice(message, user);
 					}
 					break;
 				case CustomIds.WAGER_BUTTON:
 					if(user) {
-						this.handleWagerSelect(message);
+						await this.handleWagerSelect(message);
 					}
 					break;
 				case CustomIds.BULLSHIT_BUTTON:
 					if(didPushButton && user) {
-						this.game.currentWager.calledBs = true;
-						this.handleUserWager(message, user);
+						this.game.calledBs = true;
+						await this.handleUserWager(message, interaction, user);
 					}
 					break;
 				case CustomIds.DICE_SELECT:
 					if(didSelect && user) {
-						this.game.currentWager.diceFace = message.values[0];
+						this.handleSelect(message, messageId);
 					}
 					break;
 				case CustomIds.QUANTITY_SELECT:
 					if(didSelect && user) {
-						this.game.currentWager.quantity = message.values[0];
+						this.handleSelect(message, messageId);
 					}
 					break;
 				case CustomIds.SUBMIT_WAGER:
 					if(didPushButton && user) {
-						this.handleUserWager(message, user);
+						await this.handleUserWager(message, interaction, user);
 					}
 				default:
 					break;
@@ -220,7 +228,23 @@ export default class OddsCommand {
 
 		collector?.on('end', collected => {
 			console.log('ENDED: ', collected);
+			this.users = [];
+			this.messageId = undefined;
+			this.game = {
+				currentWager: {
+					calledBs: false,
+					quantity: 0,
+					diceFace: 0,
+					result: null,
+				},
+				currentTurn: 1,
+				quantity: 0,
+				diceFace: 0,
+				calledBs: false
+			}
 			this.role!.delete('Game ended');
+			this.setDefaultGameEmbed(interaction);
+			this.role = undefined;
 		})
 	}
 
@@ -242,7 +266,19 @@ export default class OddsCommand {
 		await this.displayUsers(interaction);
 	}
 
-	private async handleStartGame(interaction: CommandInteraction, user: Player) {
+	private async handleStartGame(interaction: CommandInteraction, message: any, user: Player) {
+
+		if (user.id !== this.users[0].id) {
+			await message.followUp({
+				content: "Waiting for the host to start the game.",
+				ephemeral: true
+			});
+
+			return;
+		}
+
+		// TODO: Shuffle players
+		this.users.sort( (a, b) => a.order - b.order);
 
 		/**
 		 * Add game role to all players
@@ -254,10 +290,16 @@ export default class OddsCommand {
 		// 	}
 		// } ) );
 
+		const firstUser = interaction.guild?.members.cache.get(this.users[0].id);
+
 		this.embed
-			.setTitle(`${this.users[0].username} it's your turn first!`)
+			.setAuthor({
+				name: `Turn: ${firstUser?.user?.username}`,
+				iconURL: `${firstUser?.displayAvatarURL()}`,
+			})
+			.setTitle(`${firstUser?.user?.username} it's your turn first!          \n`)
 			.setFooter({
-				text: `Active turn: ${this.users[0].username}${this.users[1]?.username ? '\nNext turn: ' + this.users[1].username : ''}\nTotal dice count: ${this.getCurrentDiceCount()}`,
+				text: `Active turn: ${firstUser?.user?.username}${this.users[1]?.username ? '\nNext turn: ' + this.users[1].username : ''}\nTotal dice count: ${this.getCurrentDiceCount()}`,
 			})
 
 		const fields = this.buildGameFields();
@@ -329,52 +371,6 @@ export default class OddsCommand {
 		});
 	}
 
-	private async sendWagerMenu(message: CommandInteraction) {
-		const diceCount = this.getCurrentDiceCount();
-		const [row_one, row_two] = this.getWagerDropDowns(diceCount);
-		const submitButton = this.getEmbedButtons([
-			{
-				id: 'submit-wager',
-				label: 'Submit wager',
-				style: ButtonStyle.Success,
-				disabled: false
-			}
-		])
-
-		const { id } = await message.followUp({
-			content: 'Pick your quantity and dice to wager',
-			components: [row_one, row_two, submitButton],
-			ephemeral: true
-		})
-
-		this.messageId = id;
-	}
-
-	private async handleUserWager(message: ButtonInteraction, user: Player | undefined) {
-		console.log('did submit: ', this.game.currentWager.quantity, this.game.currentWager.diceFace)
-		message.deleteReply(this.messageId);
-		
-		if (this.game.currentWager.calledBs) {
-			this.embed.setTitle(`${user?.username} calls a ${this.users[this.game.currentOrder -1].username} liar!`)
-		} else {
-			this.embed.setTitle(`${user?.username} wagers ${this.game.currentWager.quantity} ${this.game.currentWager.diceFace}${Number(this.game.currentWager.quantity) > 1 ? "'s": ""}`)
-		}
-	}
-
-	private async handleWagerSelect(message: any) {
-		const player = this.users.find( user => user.id === message.user.id);
-
-		if (player && (this.currentTurn === player?.order)) {
-			this.sendWagerMenu(message);
-		}
-		else {
-			message.followUp({
-				content: "It's not your turn bro.",
-				ephemeral: true
-			});
-		}
-	}
-
 	private findNextOrder = () => {
 		const sorted = this.users.slice().sort((a: any, b: any) => a.order - b.order);
 		let previousOrder = 0;
@@ -394,7 +390,7 @@ export default class OddsCommand {
 			const user = this.users[i];
 			fields.push({
 				name: user.username,
-				value: `Recent wager: ${this.getUsersLastWager(user)}\nTurn order: ${user.order}\nDice count: ${user.dice.length}`,
+				value: `Turn order: ${user.order}\nDice count: ${user.dice.length}`,
 				inline: i === 0 ? false : true
 			})
 		}
@@ -418,7 +414,7 @@ export default class OddsCommand {
 				name: `Host: ${interaction.user.username}`,
 				iconURL: interaction.user.displayAvatarURL(),
 			})
-			.setTitle(`${interaction.user.username} started a game of Liar's Dice!                \n\nPlayer list: `)
+			.setTitle(`${interaction.user.username} started a game of Liar's Dice!${this.embedSpacing}\nPlayer list: `)
 			.setThumbnail('attachment://liars_dice.png')
 			.setColor(getColor('primary'))
 			.setFields({
@@ -427,7 +423,7 @@ export default class OddsCommand {
 				inline: true
 			})
 			.setFooter({
-				text: `Player count: ${this.users.length}`
+				text: `\u200b\n\nPlayer count: ${this.users.length}`
 			})
 
 	}
@@ -457,12 +453,138 @@ export default class OddsCommand {
 		});
 	}
 
+	private async handleUserWager(message: ButtonInteraction, interaction: CommandInteraction, user: Player | undefined) {
+		
+		const isUsersTurn = this.checkUsersTurn(message);
+		if(!isUsersTurn) {
+			return;
+		}
+
+		if(this.game.currentWager.quantity && this.game.currentWager.diceFace) {
+			const isValidWager = this.isWagerValid();
+			// if (!isValidWager) {
+			// 	message.se
+			// 	return;
+			// }
+		}
+
+		const nextPlayer = await this.getNextPlayer(interaction, this.game.currentTurn);
+		const previousPlayer = await this.getNextPlayer(interaction, this.game.currentTurn, true);
+
+		if (this.game.currentWager.calledBs) {
+			this.embed.setTitle(`${user?.username} calls ${previousPlayer?.user.username} a liar!`);
+			this.game.currentWager.calledBs = false;
+		} 
+		else {
+
+			message.deleteReply(this.messageId);
+			this.embed.setTitle(`${user?.username} wagers:${this.embedSpacing}\nQuantity: ${this.game.currentWager.quantity}\nNumber: ${this.game.currentWager.diceFace}${this.game.currentWager.quantity! > 1 ? "'s": ""}`)
+			this.game.currentWager.quantity = 0;
+			this.game.currentWager.diceFace = 0;
+		}
+
+		this.game.currentTurn = this.users[this.game.currentTurn + 1].order;
+
+		const nextUser = interaction.guild?.members.cache.get(this.users[this.game.currentTurn + 1].id);
+
+		this.embed.setAuthor({
+			name: `Turn: ${nextUser?.user?.username}`,
+			iconURL: `${nextUser?.displayAvatarURL()}`,
+		})
+
+		const buttonRow = this.getEmbedButtons([
+			{
+				id: 'show-dice-button',
+				label: 'Show Dice',
+				style: ButtonStyle.Primary,
+				disabled: false
+			},
+			{
+				id: 'wager-button',
+				label: 'Wager',
+				style: ButtonStyle.Success,
+				disabled: false
+			},
+			{
+				id: 'liar-button',
+				label: 'Liar',
+				style: ButtonStyle.Danger,
+				disabled: false
+			},
+		])
+
+		await interaction.editReply({
+			embeds: [this.embed],
+			components: [buttonRow]
+		});
+	}
+
+	private async handleSelect( message: StringSelectMenuInteraction, id: string ) {
+		const selection = Number(message.values[0]);
+
+		if( id === CustomIds.QUANTITY_SELECT) {
+			if(selection > this.game.currentWager.quantity ) {
+				this.game.quantity = selection;
+				return;
+			}
+			if(selection < this.game.currentWager.quantity) {
+				return await message.update({
+					content: 'Quantity must be the same or larger than the previous wager!',
+				});
+			}
+			if(selection === this.game.currentWager.quantity && this.game.diceFace <= this.game.currentWager.diceFace) {
+				return await message.update({
+					content: 'If you choose the same quantity, the dice face number must be higher!',
+				});
+			}
+		}
+
+		if (id === CustomIds.DICE_SELECT) {
+			this.game.diceFace === selection;
+		}
+	}
+
+	private async sendWagerMenu(message: CommandInteraction) {
+		const diceCount = this.getCurrentDiceCount();
+		const [row_one, row_two] = this.getWagerDropDowns(diceCount);
+		const submitButton = this.getEmbedButtons([
+			{
+				id: 'submit-wager',
+				label: 'Submit wager',
+				style: ButtonStyle.Success,
+				disabled: false
+			}
+		])
+
+		const { id } = await message.followUp({
+			content: 'Pick your quantity and dice to wager',
+			components: [row_one, row_two, submitButton],
+			ephemeral: true
+		})
+
+		this.messageId = id;
+	}
+
+	private async handleWagerSelect(message: any) {
+		const player = this.users.find( user => user.id === message.user.id);
+
+		if (player && (this.game.currentTurn === player?.order)) {
+			this.sendWagerMenu(message);
+		}
+		else {
+			await message.followUp({
+				content: "It's not your turn bro.",
+				ephemeral: true
+			});
+		}
+	}
+
 	private getWagerDropDowns = (diceCount: number) => {
 		const quantityDropdown = new StringSelectMenuBuilder()
 			.setCustomId('quantity-select')
 			.setPlaceholder('Select quantity')
 			.setMaxValues(diceCount)
-			.setMinValues(1)
+			.setMinValues(this.game.currentWager.quantity + 1)
 			.addOptions(...this.getSelectFields(diceCount))
 	
 		const diceFaceDropdown = new StringSelectMenuBuilder()
@@ -484,21 +606,72 @@ export default class OddsCommand {
 		];
 	}
 
+	private isWagerValid = () => {
+		const wagedQuantity = this.game.quantity;
+		const wagedDiceFace = this.game.diceFace;
+		const calledBs = this.game.calledBs;
+		const currentWagerQuantity = this.game.currentWager.quantity;
+		const currentWagerDiceFace = this.game.currentWager.diceFace;
+		const currentWagerBs = this.game.currentWager.calledBs;
+
+		if(calledBs) {
+			return true;
+		}
+
+		if(currentWagerQuantity && wagedQuantity >= currentWagerQuantity) {
+			if (wagedQuantity > currentWagerQuantity) {
+				return true;
+			}
+
+			if (wagedQuantity === currentWagerQuantity && wagedDiceFace > currentWagerDiceFace) {
+				return true;
+			}
+
+			return false;
+		}
+
+		return false;
+	}
+
 	private getCurrentDiceCount = () => {
 		return this.users.map( u => u.dice.length).reduce( (partialSum, a) => partialSum + a, 0 );
 	}
 
-	private getUsersLastWager = (user: Player) => {
-		if(user.wagers.length) {
-			const wager = user.wagers.pop();
-			if(wager?.calledBs) {
-				return 'Called Liar!'
-			} else {
-				return `Bet ${wager?.quantity} ${wager?.diceFace}${wager?.quantity && (Number(wager.quantity) > 1) ? "'s": ""}`
+	private getNextPlayer = async (interaction: CommandInteraction, order: number, previous?: boolean) => {
+		const currentPlayer = this.users.find( user => user.order === order );
+		if (currentPlayer) {
+			const currentPlayerIndex = this.users.indexOf(currentPlayer);
+			if(!previous && this.users[currentPlayerIndex + 1]) {
+				return interaction.guild?.members.cache.get(this.users[currentPlayerIndex + 1].id);
 			}
-		} else {
-			return '';
+
+			if(previous && this.users[currentPlayerIndex -1]) {
+				return interaction.guild?.members.cache.get(this.users[currentPlayerIndex - 1].id);
+			}
+		
+			return interaction.guild?.members.cache.get(this.users[!previous ? 0 : this.users.length - 1].id);
 		}
+	}
+
+	private checkUsersTurn = async(message: any) => {
+		const player = this.users.find( user => user.id === message.user.id);
+
+		if (!player) {
+			await message.followUp({
+				content: "You are not in this game session.",
+				ephemeral: true
+			});
+			return false;
+		}
+
+		if (player && (this.game.currentTurn !== player?.order)) {
+			await message.followUp({
+				content: "It's not your turn bro.",
+				ephemeral: true
+			});
+			return false;
+		}
+		return true;
 	}
 
 }
